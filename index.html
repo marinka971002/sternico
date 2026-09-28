@@ -76,5 +76,81 @@ function renderSppHistory(){let sel=document.getElementById("sppSku");if(!sel||!
 function openReport(){let dates=[...new Set(data.map(x=>x.date))].sort().reverse();document.getElementById("reportDate").value=dates[0]||new Date().toISOString().slice(0,10);renderReport();document.getElementById("reportbg").classList.remove("hidden")}
 function closeReport(){document.getElementById("reportbg").classList.add("hidden")}
 function renderReport(){let d=document.getElementById("reportDate").value,arr=data.filter(x=>x.date===d), cats=[...new Set(arr.map(x=>x.cat))];document.getElementById("reportDateTitle").textContent=d?`Отчёт за ${fmtDate(d)}`:"";let pc=arr.filter(x=>x.price_from||x.price_to).length,rkc=arr.filter(x=>x.rk).length;document.getElementById("reportSummary").innerHTML=`<div class="rstat"><span>Товаров с изменениями</span><b>${arr.length}</b></div><div class="rstat"><span>Изменений цены</span><b>${pc}</b></div><div class="rstat"><span>Изменений / настроек РК</span><b>${rkc}</b></div>`;if(!arr.length){document.getElementById("reportBody").innerHTML='<div class="reportempty">На эту дату изменений нет.</div>';return}document.getElementById("reportBody").innerHTML=cats.map(c=>`<section class="reportgroup"><h2>${e(c)}</h2>${arr.filter(x=>x.cat===c).map(x=>`<article class="reportitem"><h3>${e(x.sku)}</h3>${(x.price_from||x.price_to)?`<div class="reportrow"><b>Цена</b><div>${rub(x.price_from)} → ${rub(x.price_to)}</div></div>`:""}<div class="reportrow"><b>Рекламная кампания</b><div>${e(x.rk)||"—"}</div></div><div class="reportrow"><b>Комментарий</b><div>${e(x.comment)||"—"}</div></div></article>`).join("")}</section>`).join("")}
-render();
+
+const SB_URL='https://klkzgjsdnmpnftwxkpbr.supabase.co';
+const SB_KEY='sb_publishable_E5uRc65LgN_JV5I-P8T3RQ_5n1DjlAT';
+const SB_HEADERS={"apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY,"Content-Type":"application/json","Prefer":"return=representation"};
+
+async function sb(path,options={}){
+  let r=await fetch(SB_URL+"/rest/v1/"+path,{...options,headers:{...SB_HEADERS,...(options.headers||{})}});
+  if(!r.ok) throw new Error(await r.text());
+  let t=await r.text(); return t?JSON.parse(t):[];
+}
+function fromActionRow(r){return {_dbid:r.id,date:r.action_date,cat:r.category||"",sku:r.sku||"",price_from:r.price_from??"",price_to:r.price_to??"",rk:r.ad_changes||"",comment:r.comment||""}}
+function toActionRow(x){return {action_date:x.date,category:x.cat,sku:x.sku,price_from:x.price_from===""?null:Number(x.price_from),price_to:x.price_to===""?null:Number(x.price_to),ad_changes:x.rk||"",comment:x.comment||""}}
+
+async function cloudLoad(){
+  try{
+    let rows=await sb("action_history?select=*&order=action_date.desc,id.asc");
+    if(!rows.length){
+      let payload=SEED.map(toActionRow);
+      rows=await sb("action_history",{method:"POST",body:JSON.stringify(payload)});
+    }
+    data=rows.map(fromActionRow);
+    let sr=await sb("spp_history?select=*&order=record_date.asc,id.asc");
+    sppData=sr.map(r=>({_dbid:r.id,sku:r.sku,date:r.record_date,price:r.price??"",client:r.client_price??""}));
+    render();
+  }catch(err){
+    console.error(err); alert("Не удалось подключиться к облачной базе. Проверь интернет и настройки Supabase."); render();
+  }
+}
+persist=async function(){
+  localStorage.setItem(KEY,JSON.stringify(data)); render();
+}
+save=async function(){
+  let x={};["date","cat","sku","price_from","price_to","rk","comment"].forEach(id=>x[id]=document.getElementById(id).value.trim());
+  if(!x.date||!x.sku){alert("Укажите дату и товар");return}
+  try{
+    if(edit===null){
+      let rows=await sb("action_history",{method:"POST",body:JSON.stringify(toActionRow(x))});
+      x._dbid=rows[0]?.id; data.push(x);
+    }else{
+      let old=data[edit]; let rows=await sb("action_history?id=eq."+old._dbid,{method:"PATCH",body:JSON.stringify(toActionRow(x))});
+      x._dbid=old._dbid; data[edit]=x;
+    }
+    selected=x.sku;closeM();render();
+  }catch(err){console.error(err);alert("Не удалось сохранить изменение в облаке.")}
+}
+remove=async function(){
+  if(edit!==null&&confirm("Удалить эту дату из истории?")){
+    try{let x=data[edit];await sb("action_history?id=eq."+x._dbid,{method:"DELETE"});data.splice(edit,1);closeM();render()}
+    catch(err){console.error(err);alert("Не удалось удалить запись.")}
+  }
+}
+saveSpp=async function(sku,date,field,value){
+  try{
+    let r=sppRec(sku,date);
+    if(!r){
+      let obj={record_date:date,sku,price:null,client_price:null};
+      obj[field==="price"?"price":"client_price"]=value===""?null:Number(value);
+      let rows=await sb("spp_history",{method:"POST",body:JSON.stringify(obj)});
+      r={_dbid:rows[0]?.id,sku,date,price:field==="price"?value:"",client:field==="client"?value:""};sppData.push(r);
+    }else{
+      let col=field==="price"?"price":"client_price";
+      await sb("spp_history?id=eq."+r._dbid,{method:"PATCH",body:JSON.stringify({[col]:value===""?null:Number(value)})});
+      r[field]=value;
+    }
+    renderSpp();renderSppHistory();
+  }catch(err){console.error(err);alert("Не удалось сохранить данные СПП в облаке.")}
+}
+importData=async function(inp){
+  let f=inp.files[0];if(!f)return;let r=new FileReader();
+  r.onload=async()=>{try{let x=JSON.parse(r.result);let changes=Array.isArray(x)?x:x.changes;let spp=Array.isArray(x?.spp)?x.spp:[];if(!Array.isArray(changes))throw 0;
+    if(!confirm("Импорт добавит данные в облачную базу. Продолжить?"))return;
+    if(changes.length)await sb("action_history",{method:"POST",body:JSON.stringify(changes.map(toActionRow))});
+    if(spp.length)await sb("spp_history",{method:"POST",body:JSON.stringify(spp.map(z=>({record_date:z.date,sku:z.sku,price:z.price===""?null:Number(z.price),client_price:z.client===""?null:Number(z.client)}))) });
+    await cloudLoad();
+  }catch(e){console.error(e);alert("Не удалось импортировать резервную копию")}};r.readAsText(f)
+}
+cloudLoad();
 </script></body></html>
