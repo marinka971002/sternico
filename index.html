@@ -68,10 +68,11 @@ function isoPrev(d){let x=new Date(d+"T12:00:00");x.setDate(x.getDate()-1);retur
 function coin(price,client){price=Number(price);client=Number(client);return price>0&&client>=0?(price-client)/price*100:null}
 function pct(v){return v===null||Number.isNaN(v)?"—":v.toFixed(2).replace(".",",")+"%"}
 function sppRec(sku,date){return sppData.find(x=>x.sku===sku&&x.date===date)}
+function safeId(s){return String(s).replace(/[^a-zA-Z0-9а-яА-ЯёЁ_-]/g,"_")}
 function saveSpp(sku,date,field,value){let r=sppRec(sku,date);if(!r){r={sku,date,price:"",client:""};sppData.push(r)}r[field]=value;localStorage.setItem(SPPKEY,JSON.stringify(sppData));renderSppRowCalc(sku,date);renderSppHistory()}
 function renderSppRowCalc(sku,date){renderSpp()}
 function initSppSelectors(){let sel=document.getElementById("sppSku"),ps=products(),cur=sel.value;sel.innerHTML=ps.map(x=>`<option ${x===cur?"selected":""}>${e(x)}</option>`).join("");if(!document.getElementById("sppDate").value)document.getElementById("sppDate").value=new Date().toISOString().slice(0,10);renderSppHistory()}
-function renderSpp(){let d=document.getElementById("sppDate").value;if(!d)return;let yd=isoPrev(d);document.getElementById("sppBody").innerHTML=products().map(sku=>{let y=sppRec(sku,yd)||{},t=sppRec(sku,d)||{},yc=coin(y.price,y.client),tc=coin(t.price,t.client),delta=(yc!==null&&tc!==null)?tc-yc:null,cl=delta===null?"same":delta>0?"up":delta<0?"down":"same",ds=delta===null?"—":(delta>0?"▲ +":delta<0?"▼ ":"")+delta.toFixed(2).replace(".",",")+" п.п.";return `<tr><td class="sku">${e(sku)}</td><td class="yday">${y.price?rub(y.price):"—"}</td><td class="yday">${y.client?rub(y.client):"—"}</td><td class="coin ${yc===null?"same":""}">${pct(yc)}</td><td><input inputmode="decimal" value="${e(t.price||"")}" placeholder="Цена" onchange='saveSpp(${JSON.stringify(sku)},${JSON.stringify(d)},"price",this.value)'></td><td><input inputmode="decimal" value="${e(t.client||"")}" placeholder="Клиенту" onchange='saveSpp(${JSON.stringify(sku)},${JSON.stringify(d)},"client",this.value)'></td><td class="coin">${pct(tc)}</td><td class="${cl}"><b>${ds}</b></td></tr>`}).join("");renderSppHistory()}
+function renderSpp(){let d=document.getElementById("sppDate").value;if(!d)return;let yd=isoPrev(d);document.getElementById("sppBody").innerHTML=products().map(sku=>{let y=sppRec(sku,yd)||{},t=sppRec(sku,d)||{},yc=coin(y.price,y.client),tc=coin(t.price,t.client),delta=(yc!==null&&tc!==null)?tc-yc:null,cl=delta===null?"same":delta>0?"up":delta<0?"down":"same",ds=delta===null?"—":(delta>0?"▲ +":delta<0?"▼ ":"")+delta.toFixed(2).replace(".",",")+" п.п.";return `<tr><td class="sku">${e(sku)}</td><td class="yday">${y.price?rub(y.price):"—"}</td><td class="yday">${y.client?rub(y.client):"—"}</td><td class="coin ${yc===null?"same":""}">${pct(yc)}</td><td><input id="sp_${safeId(sku)}_${d}" inputmode="decimal" value="${e(t.price||"")}" placeholder="Цена"></td><td><input id="sc_${safeId(sku)}_${d}" inputmode="decimal" value="${e(t.client||"")}" placeholder="Клиенту"></td><td class="coin">${pct(tc)}<br><button class="link" onclick='saveSppPair(${JSON.stringify(sku)},${JSON.stringify(d)})'>Сохранить</button></td><td class="${cl}"><b>${ds}</b></td></tr>`}).join("");renderSppHistory()}
 function renderSppHistory(){let sel=document.getElementById("sppSku");if(!sel||!sel.value)return;let sku=sel.value,arr=sppData.filter(x=>x.sku===sku).sort((a,b)=>b.date.localeCompare(a.date));document.getElementById("sppHistTitle").textContent="История СПП · "+sku;document.getElementById("sppHistoryBody").innerHTML=arr.length?`<div class="historyrow"><b>Дата</b><b>Цена</b><b>Цена клиенту</b><b>Соинвест</b></div>`+arr.map(x=>`<div class="historyrow"><span>${fmtDate(x.date)}</span><span>${rub(x.price)}</span><span>${rub(x.client)}</span><b>${pct(coin(x.price,x.client))}</b></div>`).join(""):`<div class="empty">Пока нет сохранённых данных по СПП.</div>`}
 function openReport(){let dates=[...new Set(data.map(x=>x.date))].sort().reverse();document.getElementById("reportDate").value=dates[0]||new Date().toISOString().slice(0,10);renderReport();document.getElementById("reportbg").classList.remove("hidden")}
 function closeReport(){document.getElementById("reportbg").classList.add("hidden")}
@@ -142,6 +143,23 @@ saveSpp=async function(sku,date,field,value){
     }
     renderSpp();renderSppHistory();
   }catch(err){console.error(err);alert("Не удалось сохранить данные СПП в облаке.")}
+}
+async function saveSppPair(sku,date){
+  try{
+    const price=document.getElementById("sp_"+safeId(sku)+"_"+date).value.trim().replace(",",".");
+    const client=document.getElementById("sc_"+safeId(sku)+"_"+date).value.trim().replace(",",".");
+    let r=sppRec(sku,date);
+    const obj={record_date:date,sku,price:price===""?null:Number(price),client_price:client===""?null:Number(client)};
+    if(!r){
+      let rows=await sb("spp_history",{method:"POST",body:JSON.stringify(obj)});
+      sppData.push({_dbid:rows[0]?.id,sku,date,price,client});
+    }else{
+      await sb("spp_history?id=eq."+r._dbid,{method:"PATCH",body:JSON.stringify({price:obj.price,client_price:obj.client_price})});
+      r.price=price;r.client=client;
+    }
+    renderSpp();renderSppHistory();
+    alert("СПП сохранено в облаке");
+  }catch(err){console.error(err);alert("Не удалось сохранить СПП в Supabase: "+err.message)}
 }
 importData=async function(inp){
   let f=inp.files[0];if(!f)return;let r=new FileReader();
