@@ -215,11 +215,34 @@ async function restoreSppSep30Once(){
   }
 }
 
+
+const CORRECT_SPP_20260930=[{"date": "2026-09-30", "sku": "Эндоскоп", "price": 8106, "client": 4335}, {"date": "2026-09-30", "sku": "Глистогон для собак", "price": 1800, "client": 666}, {"date": "2026-09-30", "sku": "Глистогон для кошек", "price": 1800, "client": 666}, {"date": "2026-09-30", "sku": "Спрей для полости рта", "price": 1850, "client": 708}, {"date": "2026-09-30", "sku": "Когтеточка зелёная", "price": 1569, "client": 694}, {"date": "2026-09-30", "sku": "Когтеточка коричневая", "price": 1569, "client": 694}, {"date": "2026-09-30", "sku": "Когтеточка белая", "price": 1591, "client": 697}, {"date": "2026-09-30", "sku": "Когтеточка бежевая", "price": 1591, "client": 697}, {"date": "2026-09-30", "sku": "Когтеточка тёмно-серая", "price": 1569, "client": 694}, {"date": "2026-09-30", "sku": "Когтеточка светло-серая", "price": 1573, "client": 696}, {"date": "2026-09-30", "sku": "Кошка · пара", "price": 1950, "client": 732}, {"date": "2026-09-30", "sku": "Собака · пара", "price": 1950, "client": 726}, {"date": "2026-09-30", "sku": "Зелёная собака", "price": 1250, "client": 483}, {"date": "2026-09-30", "sku": "Зелёная кошка", "price": 1250, "client": 483}, {"date": "2026-09-30", "sku": "Фиолетовая кошка", "price": 1300, "client": 491}, {"date": "2026-09-30", "sku": "Оранжевая собака", "price": 1250, "client": 450}, {"date": "2026-09-30", "sku": "Синяя собака", "price": 1250, "client": 450}, {"date": "2026-09-30", "sku": "Фиолетовая собака", "price": 1250, "client": 483}, {"date": "2026-09-30", "sku": "Серая собака", "price": 1250, "client": 483}, {"date": "2026-09-30", "sku": "Розовая собака", "price": 1250, "client": 450}, {"date": "2026-09-30", "sku": "Чёрная собака", "price": 1250, "client": 483}, {"date": "2026-09-30", "sku": "Чёрная кошка", "price": 1250, "client": 483}, {"date": "2026-09-30", "sku": "Серая кошка", "price": 1250, "client": 450}, {"date": "2026-09-30", "sku": "Синяя кошка", "price": 1250, "client": 483}, {"date": "2026-09-30", "sku": "Оранжевая кошка", "price": 1250, "client": 483}, {"date": "2026-09-30", "sku": "Розовая кошка", "price": 1300, "client": 491}];
+async function correctSppSep30(){
+  try{
+    for(const x of CORRECT_SPP_20260930){
+      const q="spp_history?record_date=eq.2026-09-30&sku=eq."+encodeURIComponent(x.sku);
+      const rows=await sb(q);
+      const obj={record_date:x.date,sku:x.sku,price:x.price,client_price:x.client};
+      if(rows.length){
+        await sb("spp_history?id=eq."+rows[0].id,{method:"PATCH",body:JSON.stringify(obj)});
+        // remove accidental duplicates for same date+SKU, if any
+        for(let i=1;i<rows.length;i++) await sb("spp_history?id=eq."+rows[i].id,{method:"DELETE"});
+      }else{
+        await sb("spp_history",{method:"POST",body:JSON.stringify(obj)});
+      }
+    }
+    return CORRECT_SPP_20260930.length;
+  }catch(err){
+    console.error("SPP correction failed",err);
+    return -1;
+  }
+}
 (async()=>{
   const n=await restoreSep30Once();
   const s=await restoreSppSep30Once();
+  const fixed=await correctSppSep30();
   await cloudLoad();
-  if(n>0 || s>0) cloudStatus("Восстановлено: изменения "+Math.max(n,0)+", СПП "+Math.max(s,0)+" · облако ✓");
+  if(fixed>0) cloudStatus("СПП за 30.09 исправлено: "+fixed+" товаров · облако ✓"); else if(n>0 || s>0) cloudStatus("Восстановлено: изменения "+Math.max(n,0)+", СПП "+Math.max(s,0)+" · облако ✓");
   else if(n===0 && s===0) cloudStatus("Облако подключено ✓");
 })();
 </script></body></html>
