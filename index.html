@@ -23,7 +23,7 @@ button,.btn{border:0;border-radius:12px;padding:11px 15px;font-weight:700;cursor
 <div class="head"><div><div class="eyebrow">Ozon · рабочий журнал</div><h1>История изменений по товарам</h1><div class="sub">Каждая новая дата — отдельная запись. Старые изменения не перезаписываются.</div></div>
 <div class="toolbar"><button onclick="exportData()">Резервная копия</button><button onclick="document.getElementById('imp').click()">Восстановить</button><input id="imp" type="file" accept=".json" hidden onchange="importData(this)"><button onclick="openReport()">Отчёт руководителю</button><button class="primary" onclick="addForSelected()">+ Добавить изменение</button></div></div>
 <div class="tabs"><button id="tabWork" class="tab active" onclick="showTab('work')">История изменений</button><button id="tabSpp" class="tab" onclick="showTab('spp')">СПП / Соинвест</button><button class="tab" onclick="openReport()">Отчёт руководителю</button></div><div id="workView"><div class="stats"><div class="stat"><span>Товаров</span><b id="stProducts"></b></div><div class="stat"><span>Записей в истории</span><b id="stRecords"></b></div><div class="stat"><span>Дат изменений</span><b id="stDates"></b></div></div>
-<div class="layout"><aside class="side"><input class="search" id="search" placeholder="Найти товар…" oninput="renderProducts()"><div id="products"></div><div class="notice">Записи сохраняются в этом браузере. Для переноса на другое устройство используйте «Резервная копия».</div></aside>
+<div class="layout"><aside class="side"><input class="search" id="search" placeholder="Найти товар…" oninput="renderProducts()"><div id="products"></div><div class="notice"><b id="cloudStatus">Подключение к облаку…</b><br>Основная история хранится в Supabase. «Резервная копия» создаёт дополнительный JSON-файл.</div></aside>
 <main class="main"><div id="detail"></div></main></div></div></div>
 <div id="sppView" class="hidden"><section class="spppanel"><div class="spphead"><div><div class="eyebrow">Ежедневный контроль</div><h2>СПП / Соинвест</h2><div class="sub">Вводишь цену и цену для клиента — процент соинвеста считается автоматически.</div></div><div><label class="sub">Дата ввода</label><br><input id="sppDate" type="date" onchange="renderSpp()"></div></div>
 <div class="sppwrap"><table class="spptable"><thead><tr><th>Артикул</th><th>Вчера: цена</th><th>Вчера: клиенту</th><th>Вчера: соинвест</th><th>Сегодня: цена</th><th>Сегодня: клиенту</th><th>Сегодня: соинвест</th><th>Δ к вчера</th></tr></thead><tbody id="sppBody"></tbody></table></div>
@@ -90,6 +90,15 @@ async function sb(path,options={}){
 function fromActionRow(r){return {_dbid:r.id,date:r.action_date,cat:r.category||"",sku:r.sku||"",price_from:r.price_from??"",price_to:r.price_to??"",rk:r.ad_changes||"",comment:r.comment||""}}
 function toActionRow(x){return {action_date:x.date,category:x.cat,sku:x.sku,price_from:x.price_from===""?null:Number(x.price_from),price_to:x.price_to===""?null:Number(x.price_to),ad_changes:x.rk||"",comment:x.comment||""}}
 
+function cloudStatus(msg,ok=true){
+  const el=document.getElementById("cloudStatus");
+  if(el){el.textContent=msg;el.style.color=ok?"#16855f":"#c9485b";}
+}
+async function recordExists(x){
+  const q="action_history?select=id&action_date=eq."+encodeURIComponent(x.date)+"&sku=eq."+encodeURIComponent(x.sku);
+  const rows=await sb(q);
+  return rows.length>0;
+}
 async function cloudLoad(){
   try{
     let rows=await sb("action_history?select=*&order=action_date.desc,id.asc");
@@ -100,9 +109,9 @@ async function cloudLoad(){
     data=rows.map(fromActionRow);
     let sr=await sb("spp_history?select=*&order=record_date.asc,id.asc");
     sppData=sr.map(r=>({_dbid:r.id,sku:r.sku,date:r.record_date,price:r.price??"",client:r.client_price??""}));
-    render();
+    render(); cloudStatus("Облако подключено ✓");
   }catch(err){
-    console.error(err); alert("Не удалось подключиться к облачной базе. Проверь интернет и настройки Supabase."); render();
+    console.error(err); cloudStatus("Ошибка подключения к облаку",false); alert("Не удалось подключиться к облачной базе. Проверь интернет и настройки Supabase."); render();
   }
 }
 persist=async function(){
@@ -119,8 +128,8 @@ save=async function(){
       let old=data[edit]; let rows=await sb("action_history?id=eq."+old._dbid,{method:"PATCH",body:JSON.stringify(toActionRow(x))});
       x._dbid=old._dbid; data[edit]=x;
     }
-    selected=x.sku;closeM();render();
-  }catch(err){console.error(err);alert("Не удалось сохранить изменение в облаке.")}
+    selected=x.sku;closeM();render();cloudStatus("Сохранено в облаке ✓");
+  }catch(err){console.error(err);cloudStatus("НЕ сохранено в облаке",false);alert("Не удалось сохранить изменение в облаке. Запись не потеряна из формы — попробуйте ещё раз.")}
 }
 remove=async function(){
   if(edit!==null&&confirm("Удалить эту дату из истории?")){
@@ -158,7 +167,7 @@ async function saveSppPair(sku,date){
       r.price=price;r.client=client;
     }
     renderSpp();renderSppHistory();
-    alert("СПП сохранено в облаке");
+    cloudStatus("СПП сохранено в облаке ✓"); alert("СПП сохранено в облаке");
   }catch(err){console.error(err);alert("Не удалось сохранить СПП в Supabase: "+err.message)}
 }
 importData=async function(inp){
@@ -170,5 +179,26 @@ importData=async function(inp){
     await cloudLoad();
   }catch(e){console.error(e);alert("Не удалось импортировать резервную копию")}};r.readAsText(f)
 }
-cloudLoad();
+
+const RECOVERY_20260930=[{"date": "2026-09-30", "cat": "Эндоскоп", "sku": "Эндоскоп", "price_from": "8900", "price_to": "8106", "rk": "Рекламу перевела на автоподнятии, недельный бюджет 3000, работает оплата за заказ 5%", "comment": "Добавила товар в акцию максимальный бустинг, скидка на сток, по экономике мы проходим при дрр 15% , прибыль 11% , просчет через вайлдбокс Сделала это для повышения СПП и повышения ранжирования в поиске"}, {"date": "2026-09-30", "cat": "Ошейники · кошки", "sku": "Фиолетовая кошка", "price_from": "", "price_to": "", "rk": "Перевела на автоподнятие, еженедельный бюджет увеличила до 3000", "comment": "поднимаем товар в поисковой выдачи"}, {"date": "2026-09-30", "cat": "Ошейники · кошки", "sku": "Розовая кошка", "price_from": "", "price_to": "", "rk": "Ставим на минималку, уводим только н продажи со склейки мало остатков", "comment": "оплату за заказ не включаю, оставляем трафик только со склейки"}, {"date": "2026-09-30", "cat": "Ошейники · кошки", "sku": "Оранжевая кошка", "price_from": "", "price_to": "", "rk": "Перевела на автоподнятие, еженедельный бюджет увеличила до 3000", "comment": "поднимаем товар в выдачи"}, {"date": "2026-09-30", "cat": "Ошейники · кошки", "sku": "Чёрная кошка", "price_from": "", "price_to": "", "rk": "Перевела на автоподнятие, еженедельный бюджет увеличила до 3000", "comment": "поднимаем в выдачи, наращиваем продажи по карточке"}, {"date": "2026-09-30", "cat": "Ошейники · кошки", "sku": "Зелёная кошка", "price_from": "", "price_to": "", "rk": "оставляю на минималке, добавляю оплату за заказ", "comment": ""}, {"date": "2026-09-30", "cat": "Ошейники · кошки", "sku": "Кошка · пара", "price_from": "", "price_to": "", "rk": "оставляем на минималке, подключаем оплату за заказ", "comment": ""}, {"date": "2026-09-30", "cat": "Ошейники · кошки", "sku": "Серая кошка", "price_from": "", "price_to": "", "rk": "оставляем на минималке , оставляем оплату за заказ", "comment": ""}, {"date": "2026-09-30", "cat": "Ошейники · кошки", "sku": "Синяя кошка", "price_from": "", "price_to": "", "rk": "оставляем на минималке, добавляем оплату за заказ", "comment": ""}, {"date": "2026-09-30", "cat": "Ошейники · собаки", "sku": "Оранжевая собака", "price_from": "", "price_to": "", "rk": "Перевела на автоподнятие, еженедельный бюджет увеличила до 3000", "comment": ""}, {"date": "2026-09-30", "cat": "Ошейники · собаки", "sku": "Розовая собака", "price_from": "", "price_to": "", "rk": "Перевела на автоподнятие, еженедельный бюджет увеличила до 3000", "comment": ""}, {"date": "2026-09-30", "cat": "Ошейники · собаки", "sku": "Чёрная собака", "price_from": "", "price_to": "", "rk": "Перевела на автоподнятие, еженедельный бюджет увеличила до 3000", "comment": ""}, {"date": "2026-09-30", "cat": "Ошейники · собаки", "sku": "Зелёная собака", "price_from": "", "price_to": "", "rk": "оставляем на минималке, добавляем оплату за заказ", "comment": ""}, {"date": "2026-09-30", "cat": "Ошейники · собаки", "sku": "Серая собака", "price_from": "", "price_to": "", "rk": "оставляем на минималке, добавляем оплату за заказ", "comment": ""}, {"date": "2026-09-30", "cat": "Ошейники · собаки", "sku": "Синяя собака", "price_from": "", "price_to": "", "rk": "оставляем на минималке, добавляем оплату за заказ", "comment": ""}, {"date": "2026-09-30", "cat": "Ошейники · собаки", "sku": "Собака · пара", "price_from": "", "price_to": "", "rk": "оставляем на минималке, добавляем оплату за заказ", "comment": ""}, {"date": "2026-09-30", "cat": "Ошейники · собаки", "sku": "Фиолетовая собака", "price_from": "", "price_to": "", "rk": "оставляем на минималке, добавляем оплату за заказ", "comment": ""}, {"date": "2026-09-30", "cat": "Когтеточки", "sku": "Когтеточка бежевая", "price_from": "", "price_to": "", "rk": "перевела на автоподнятие, недельный бюджет 3000", "comment": ""}, {"date": "2026-09-30", "cat": "Когтеточки", "sku": "Когтеточка белая", "price_from": "", "price_to": "", "rk": "перевела на автоподнятие, недельный бюджет 3000", "comment": ""}, {"date": "2026-09-30", "cat": "Когтеточки", "sku": "Когтеточка коричневая", "price_from": "", "price_to": "", "rk": "перевела на автоподнятие, недельный бюджет 3000", "comment": ""}, {"date": "2026-09-30", "cat": "Когтеточки", "sku": "Когтеточка светло-серая", "price_from": "", "price_to": "", "rk": "на минималке, работает оплата за заказ", "comment": ""}, {"date": "2026-09-30", "cat": "Когтеточки", "sku": "Когтеточка тёмно-серая", "price_from": "", "price_to": "", "rk": "на минималке, работает оплата за заказ", "comment": ""}, {"date": "2026-09-30", "cat": "Когтеточки", "sku": "Когтеточка зелёная", "price_from": "", "price_to": "", "rk": "на минималке, работает оплата за заказ", "comment": ""}, {"date": "2026-09-30", "cat": "Спрей", "sku": "Спрей для полости рта", "price_from": "1900", "price_to": "1850", "rk": "оставляю на том же уровне, снижаем цену, работает оплата за заказ", "comment": ""}, {"date": "2026-09-30", "cat": "Глистогон", "sku": "Глистогон для кошек", "price_from": "1832", "price_to": "1800", "rk": "ждем поставки на фбо, работает на мнималке автоподнятие , начинаем качать рк когда заходит на остатки, работает оплата за клик", "comment": ""}, {"date": "2026-09-30", "cat": "Глистогон", "sku": "Глистогон для собак", "price_from": "1832", "price_to": "1800", "rk": "ждем поставки на фбо, работает на мнималке автоподнятие , начинаем качать рк когда заходит на остатки, работает оплата за клик", "comment": ""}];
+async function restoreSep30Once(){
+  try{
+    const existing=await sb("action_history?select=id,action_date,sku&action_date=eq.2026-09-30");
+    const keys=new Set(existing.map(r=>r.action_date+"|"+r.sku));
+    const missing=RECOVERY_20260930.filter(x=>!keys.has(x.date+"|"+x.sku));
+    if(missing.length){
+      await sb("action_history",{method:"POST",body:JSON.stringify(missing.map(toActionRow))});
+    }
+    return missing.length;
+  }catch(err){
+    console.error("Recovery failed",err);
+    return -1;
+  }
+}
+
+(async()=>{
+  const n=await restoreSep30Once();
+  await cloudLoad();
+  if(n>0) cloudStatus("Восстановлено "+n+" записей за 30.09 · облако ✓");
+})();
 </script></body></html>
